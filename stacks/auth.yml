@@ -1,0 +1,160 @@
+Description: |
+  Bachelorarbeit - Authentifizierungsservice mit AWS Cognito
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: AWS::Serverless-2016-10-31
+
+
+Parameters: 
+  AppName: 
+    Type: String
+    Description: Name der Anwendung
+  ClientDomains:
+    Type: CommaDelimitedList
+    Description: Domains, die den Service nutzen können
+  TableName:
+    Type: String
+    Description: Tabellenname für Anwendungstabelle
+  TableArn:
+    Type: String
+    Description: ARN der Anwendungstabelle
+
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      UserPoolName: !Sub ${AppName}-UserPool
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: true
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: true
+      Schema:
+        - AttributeDataType: Boolean
+          Name: isCustomer
+        - AttributeDataType: String
+          Name: adress
+          Mutable: true
+
+  #Beschreibt eine Anwendung mit der die Authorisierung getätigt werden kann
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub ${AppName}-UserPoolClient
+      GenerateSecret: false # Web clients immer false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: ["code", "implicit"] # Implicit ermöglicht Tests mit postman
+      CallbackURLs: !Ref ClientDomains # Enthält alle URLs die Cognito nutzen
+      LogoutURLs: !Ref ClientDomains # Enthält alle URLs die Cognito nutzen
+      SupportedIdentityProviders: ["COGNITO"]
+      AllowedOAuthScopes: ["phone", "email", "openid"] #Properties die abgefragt werden können, in einem Token
+      ExplicitAuthFlows:
+        - USER_PASSWORD_AUTH
+  
+  RestaurantUserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Restaurants
+      Description: Restaurant UserPool
+      Precedence: 0
+      UserPoolId: !Ref UserPool
+
+  CustomerUserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Customers
+      Description: Usergroup for Customer
+      Precedence: 0
+      UserPoolId: !Ref UserPool
+
+  
+  # Bei der Tokengenerieren, wird die Nutzergruppe in den Token als Scope aufgenommen
+  # sodass über das API Gateway die Nutzerautorisierung nach Gruppen möglich wird
+  UserPoolPreTokenTrigger:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-CognitoPostAuthenticationTriggerFn"
+      Timeout: 5
+      Handler: handler.authorizer
+      Runtime: nodejs12.x
+      CodeUri: ../src/authorizer/GenerateToken
+      Events:
+        CognitoTrigger:
+          Type: Cognito
+          Properties:
+            Trigger: PreTokenGeneration
+            UserPool: !Ref UserPool
+
+# Nach erfolgreicher Registrierung wird Nutzer Gruppe zugewiesen und in DB gespeichert
+  UserPoolPostConfirmationTrigger:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 5
+      Handler: index.handler
+      Runtime: nodejs12.x
+      CodeUri: ../src/authorizer/PutUserInGroup
+      Role: !GetAtt CognitoPostConfirmationTriggerExecutionRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+      Events:
+        CognitoTrigger:
+          Type: Cognito
+          Properties:
+            Trigger: PostConfirmation
+            UserPool: !Ref UserPool
+
+
+  ### Rolle für UserPoolPostConfirmationTrigger:
+  CognitoPostConfirmationTriggerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !Ref TableArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminAddUserToGroup
+                Resource: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+
+
+Outputs:
+  UserPoolClient:
+    Description: Test output inner Stack
+    Value: !Ref UserPoolClient
+  UserPool:
+    Description: Test output inner Stack
+    Value:   
+      Fn::GetAtt:
+      - UserPool
+      - Arn

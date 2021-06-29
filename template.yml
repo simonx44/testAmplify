@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Prototyp Essensbestellapp - Bachelorarbeit
+Transform:
+  - AWS::Serverless-2016-10-31
+
+
+Parameters:
+  CognitoDomainName:
+    Type: String
+    Default: bestelldemo
+  AppName:
+    Type: String
+    Description: AppApi
+  ClientDomains:
+    Type: CommaDelimitedList
+    Description: Domains, die den Service nutzen können
+  SESMail:
+    Type: String
+    Description: Email für SES -> Muss manuell registriert werden
+  GithubRepository:
+    Type: String
+    Description: GitHub repository URL
+  PersonalAcessToken:
+    Type: String
+    Description: Github personal access token
+
+Resources:
+#
+  ##### Frontend
+  ## Die VUE.JS App wird über Amplify bereitgestellt
+  ## Wird mit Git-Repositorium verlinkt
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: Bestellapp-Client
+      Description: Vuejs Frontend
+      Repository: !Ref GithubRepository
+      AccessToken: !Ref PersonalAcessToken
+      BuildSpec: |-
+        version: 0.1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - cd client/bestellapp_frontend_vue
+                - npm i
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: client/bestellapp_frontend_vue/dist
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      IAMServiceRole: !GetAtt AmplifyRole.Arn
+      
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      BranchName: main
+      AppId: !GetAtt AmplifyApp.AppId
+      Description: MAin Branch
+      EnableAutoBuild: true        
+
+    ##   Amplify Hosting Role
+  AmplifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: Amplify
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "amplify:*"
+                Resource: "*"          
+
+Outputs:
+  
+
+  AmplifyDeployCommand:
+    Description: Command to deploy the Amplify application
+    Value: !Sub
+      - aws amplify start-job --app-id ${AmplifyID} --branch-name main --job-type RELEASE
+      - AmplifyID: !GetAtt AmplifyApp.AppId

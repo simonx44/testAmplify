@@ -1,0 +1,67 @@
+Description: |
+  Bachelorarbeit - Authentifizierungsservice mit AWS Cognito
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: AWS::Serverless-2016-10-31
+
+
+Parameters: 
+  GithubRepository: 
+    Type: String
+    Description: Respositorium des Frontends als GitHub-Link
+  PersonalAcessToken: 
+    Type: String
+    Description: GitHub Token für den Zugriff durch Amplify
+    
+ 
+Resources:
+  ##### Frontend
+  ## Die VUE.JS App wird über Amplify bereitgestellt
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: Bestellapp-Client
+      Description: Vuejs Frontend
+      Repository: !Ref GithubRepository
+      AccessToken: !Ref PersonalAcessToken
+      BuildSpec: |-
+        version: 0.1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - cd client/bestellapp_frontend_vue
+                - npm i
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: client/dist
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      IAMServiceRole: !GetAtt AmplifyRole.Arn
+
+    ##   Amplify Hosting Role
+  AmplifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: Amplify
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "amplify:*"
+                Resource: "*"
